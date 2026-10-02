@@ -1,0 +1,21 @@
+# Each rule maps an incident class and a confidence floor to an action tier.
+# Tiers: 0 log only, 1 alert operator, 2 isolate subsystem, 3 degrade to safe mode.
+# When two rules match, the higher tier wins.
+rules:
+  - technique: sensor_drift_high
+    incident_class: sensor_drift
+    min_confidence: 0.8
+    tier: 2
+    reason: "High confidence drift, isolate the subsystem"
+
+  - technique: sensor_drift_low
+    incident_class: sensor_drift
+    min_confidence: 0.4
+    tier: 1
+    reason: "Possible drift, alert the operator only"
+
+  - technique: sequence_violation
+    incident_class: sequence_violation
+    min_confidence: 0.5
+    tier: 2
+    reason: "Steps running out of order, isolate"

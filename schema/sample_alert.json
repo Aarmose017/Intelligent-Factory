@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "alert_id": "a1",
+  "emitted_at": "2026-10-01T14:22:31Z",
+  "observed_at": "2026-10-01T14:22:29Z",
+  "incident_class": "sensor_drift",
+  "confidence": 0.82,
+  "affected_subsystem": "machine_02",
+  "observed_deviation": {
+    "signal": "cycle_time_s",
+    "expected_band": [10.0, 12.0],
+    "actual": 17.4
+  }
+}
