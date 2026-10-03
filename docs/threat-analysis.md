@@ -26,8 +26,10 @@ older version of the matrix, that is why the numbers will not match.
 FactorySimPy has no controllers, no network and no messages. It has nodes (Source,
 Machine, Sink, plus Splitter and Combiner) connected by edges (Buffer, conveyors).
 The parameters it exposes include `processing_delay` on Machine,
-`inter_arrival_time` on Source and `store_capacity` on Buffer. Its docs say nothing
-about machine failures or machine states. So every technique below is modelled by
+`inter_arrival_time` on Source and `capacity` on Buffer. Machines have states
+(`SETUP`, `IDLE`, `PROCESSING`, `BLOCKED`) but no breakdowns or operating modes.
+What we can read and change was tested by running the library, see
+`docs/environment-notes.md`. So every technique below is modelled by
 its effect on the process, not by the mechanism a real attacker would use. Where a
 technique attacks "messages", it means the telemetry stream Team B reads, which is
 something we or Team B have to build on top of the simulation.
@@ -39,8 +41,8 @@ for Sprint 2. Each one is something we can inject or measure on our own line. Th
 extended set adds eight more. They are real and they apply to us, but most of them
 are Impact techniques that describe the result of a core technique, or they depend
 on something in the simulation we have not confirmed. The conditional set is two
-techniques that only apply if the simulation turns out to model safety or physical
-damage.
+techniques about safety and physical damage. The simulation does not model either,
+so they only apply if we decide to add that ourselves.
 
 ## Summary
 
@@ -62,8 +64,8 @@ damage.
 | T0813 | Denial of Control | Impact | extended | partly |
 | T0827 | Loss of Control | Impact | extended | yes |
 | T0826 | Loss of Availability | Impact | extended | yes |
-| T0880 | Loss of Safety | Impact | conditional | only if modelled |
-| T0879 | Damage to Property | Impact | conditional | only if modelled |
+| T0880 | Loss of Safety | Impact | conditional | not modelled |
+| T0879 | Damage to Property | Impact | conditional | not modelled |
 
 18 techniques in total. If the product owner asks for a coverage number, the honest
 one for Sprint 2 is the eight core techniques.
@@ -76,7 +78,7 @@ one for Sprint 2 is the eight core techniques.
 Tactic: Impair Process Control
 
 What it looks like on our line: A machine's `processing_delay` is changed mid run,
-or the Source `inter_arrival_time`, or a Buffer `store_capacity`. A slower machine
+or the Source `inter_arrival_time`, or a Buffer `capacity`. A slower machine
 shows up as cycle time leaving its normal band. Its upstream buffer fills and the
 Sink count rate drops. A shrunk buffer causes blocking upstream earlier than it
 should.
@@ -88,9 +90,10 @@ most direct attack we can inject and the clearest signature Team B can detect. T
 sample alert in `schema/sample_alert.json` (cycle time 17.4 s against a 10 to 12 s
 band) is really this technique.
 
-**Unsure:** whether a parameter can be changed while the simulation is running, or
-only set at construction. If only at construction we would have to wrap the
-Machine or restart the run. Waiting on Juan Carlos's environment notes.
+Confirmed in the environment notes: setting `processing_delay` mid run takes effect
+on the next item. One catch for the buffer case. Setting `buffer.capacity` changes
+the attribute but not the real limit, so a capacity attack has to go through
+`buffer.inbuiltstore`. Not tried yet.
 
 ### T1692 Unauthorized Message
 Tactic: Evasion, Impair Process Control
@@ -117,8 +120,15 @@ signature. .002 matters for us on the response side, since acting on a spoofed
 report means we isolate a subsystem that was fine, which is one of the wrong
 response costs we have to measure.
 
+How we would inject it: .001 by stopping a machine or the Source with a very large
+`processing_delay` or `inter_arrival_time`, which works. .002 by writing to
+`machine.state`. The environment notes found that this changes only the reported
+state, not what the machine does, until its next real state change. That is a
+spoofed report by definition.
+
 **Unsure:** .001 and T0816 can look the same in process data. The difference may
-only be duration and whether the machine loses work in progress. .002 needs a
+only be duration and whether the machine loses work in progress. For .002, writing
+`state` covers one signal. Spoofing counts or buffer levels would still need a
 telemetry layer between the simulation and Team B, which nobody has agreed to build
 yet.
 
@@ -169,9 +179,12 @@ discrete line and the easiest to tie to production loss. It is also the case whe
 a false positive is most likely, since machines stop for normal reasons too, so it
 feeds the cost of wrong responses measurement.
 
-**Unsure:** FactorySimPy does not document breakdowns or machine states, so we would
-have to implement shutdown ourselves, probably by interrupting the machine's SimPy
-process. Not confirmed this works.
+**Unsure:** FactorySimPy has machine states but no breakdowns, so we implement this
+ourselves. Shutdown works: a very large `processing_delay` stops the machine.
+Restart does not. Setting the delay back does not wake a machine that is already in
+its long wait (environment notes, trap 3). So today we can inject a shutdown but not
+a restart. Interrupting the machine's SimPy process is the next thing to try. The
+same gap blocks our own return to normal action.
 
 ### T0889 Modify Program
 Tactic: Persistence
@@ -182,9 +195,13 @@ FactorySimPy the closest thing to a program is routing, `in_edge_selection` and
 `out_edge_selection`. This is what our `sequence_violation` incident class is meant
 to cover.
 
-Observable in process data? partly. Items arriving at the Sink without passing a
-required machine would be visible if items carry a route history. Without that,
-only knock on effects like unbalanced buffer levels show.
+Observable in process data? partly. Each machine records which input and output
+edge it picked for every item (`stats["in_edge_selection"]` and
+`stats["out_edge_selection"]`), so a change in routing is visible directly. But
+this only means something if the line has a choice to make. The minimal line in
+the environment notes is a straight chain with one edge in and one out, where
+routing cannot change. Our line needs at least one branch (a Splitter, or a machine
+with two output edges) for this technique to exist.
 
 In scope because: Step order matters on a discrete line, and our policy already has
 a rule for sequence violations, so it needs a technique behind it.
@@ -250,7 +267,8 @@ T0889. T0889 changes what the logic does, T0821 changes when it runs.
 
 **Unsure:** in FactorySimPy both "program" and "tasking" come down to how a node
 behaves, so we may not be able to inject T0821 and T0889 in ways that look
-different. We should only count both if Juan Carlos can.
+different. We should only count both if we can. Like T0889, it also needs a line
+with a branch, since `in_edge_selection` does nothing with a single input edge.
 
 ### T0835 Manipulate I/O Image
 Tactic: Inhibit Response Function
@@ -270,8 +288,10 @@ response is different. Isolating the machine makes sense here, but not for a
 spoofed report.
 
 **Unsure:** FactorySimPy has no PLC and no I/O image. We would fake it by changing
-what a machine sees about its neighbours. Nodes have a `blocking` parameter but
-we have not checked whether this can be overridden mid run.
+what a machine sees about its neighbours. Machines have a `blocking` parameter
+(default `True`) but we have not checked whether changing it mid run has a real
+effect. Given the traps in the environment notes, where some assignments change
+only the attribute, this has to be tested, not assumed.
 
 ### T0832 Manipulation of View
 Tactic: Impact
@@ -316,8 +336,10 @@ the only defensible action, since we cannot see whether the line is being
 damaged.
 
 **Unsure:** how long a gap has to last to count as loss instead of denial. It
-should be some number of cycle times, and the cycle time is still an open
-question.
+should be some number of cycle times. The environment notes propose a 3 second
+cycle (one time unit as one second, `processing_delay` 3), still to be agreed with
+the product owner. If that holds, something like ten cycles, 30 seconds, is a
+starting point, but that number is a guess.
 
 ### T0813 Denial of Control
 Tactic: Impact
@@ -365,9 +387,11 @@ split explicit.
 
 ## Conditional set
 
-These two depend on the open question of whether anything in the simulation
-represents physical harm. They are written up now so they are ready if the answer
-is yes.
+The environment notes settled the open question here. Nothing in FactorySimPy
+represents physical harm, safety functions, damage, wear or scrap. So these two
+only apply if we add something like that to the model ourselves. That is a
+decision for the product owner. They are written up so they are ready if the
+answer is yes.
 
 ### T0880 Loss of Safety
 Tactic: Impact
@@ -381,8 +405,8 @@ Observable in process data? only if a safety function is modelled.
 In scope because: It is the strongest reason for tier 3 to exist. It would also
 give the paired on/off measurement a harm number, not just a throughput number.
 
-**Unsure:** nothing like this is in the FactorySimPy docs. We may have to add it
-ourselves, and then we need to be clear in the report that we added it.
+Status: confirmed not in the model. If we add it, we need to be clear in the report
+that we added it.
 
 ### T0879 Damage to Property
 Tactic: Impact
@@ -396,7 +420,9 @@ Observable in process data? only if damage is modelled as a state.
 In scope because: Without it, process impact avoided can only be measured as lost
 throughput. With it we could also report damage avoided.
 
-**Unsure:** same as T0880. Not in the FactorySimPy docs as far as we can tell.
+Status: same as T0880, confirmed not in the model. Until then, process impact
+avoided uses a proxy. The environment notes suggest throughput lost against a
+clean baseline.
 
 ---
 
@@ -432,10 +458,11 @@ Some also fall under the network layer exclusions.
   has no alarm system. In our setup the alarm is Team B's detector, and if that is
   suppressed no alert reaches us at all, so there is nothing for our layer to do.
 - **No equivalent in FactorySimPy:** T0877 I/O Image (reading the I/O image, no
-  process change), T0858 Change Operating Mode (no documented modes), T0809 Data
-  Destruction (no data stores). **Unsure** on T0858. Its modes include Stop, which
-  would look like T0816 on our line. If Juan Carlos finds machine modes, it should
-  come back in.
+  process change), T0858 Change Operating Mode (no operating modes), T0809 Data
+  Destruction (no data stores). On T0858: machines do have states, but those are
+  run states like `IDLE` and `BLOCKED`, not controller modes like Program or Run,
+  and writing to `state` does not change behaviour anyway. ATT&CK's Stop mode
+  would look like T0816 on our line, so nothing is lost by leaving it out.
 - **T0837 Loss of Protection:** about protective functions like relays and
   breakers. Nothing like that is in the simulation, and if a safety function gets
   added, T0880 already covers it.
@@ -467,7 +494,7 @@ instead of ATT&CK IDs.
 | T0829 | telemetry gone for longer than a threshold | none yet |
 | T0813, T0827 | our action sent but the process does not change | none, our watchdog catches it, not Team B |
 | T0826 | Sink count stops | none yet |
-| T0880, T0879 | only if modelled | n/a |
+| T0880, T0879 | not modelled | n/a |
 
 Questions for Joshua and Team B:
 
