@@ -34,7 +34,43 @@ something we or Team B have to build on top of the simulation.
 
 Things marked **Unsure** are open and should not be presented as settled.
 
+The techniques are split into three groups. The core set is the eight we commit to
+for Sprint 2. Each one is something we can inject or measure on our own line. The
+extended set adds eight more. They are real and they apply to us, but most of them
+are Impact techniques that describe the result of a core technique, or they depend
+on something in the simulation we have not confirmed. The conditional set is two
+techniques that only apply if the simulation turns out to model safety or physical
+damage.
+
+## Summary
+
+| ID | Name | Tactic | Group | Observable |
+|---|---|---|---|---|
+| T0836 | Modify Parameter | Impair Process Control | core | yes |
+| T1692 | Unauthorized Message | Evasion, Impair Process Control | core | yes (.001), partly (.002) |
+| T1691 | Block Operational Technology Message | Inhibit Response Function | core | partly |
+| T0806 | Brute Force I/O | Impair Process Control | core | yes |
+| T0816 | Device Restart/Shutdown | Inhibit Response Function | core | yes |
+| T0889 | Modify Program | Persistence | core | partly |
+| T0831 | Manipulation of Control | Impact | core | yes |
+| T0828 | Loss of Productivity and Revenue | Impact | core | yes |
+| T0821 | Modify Controller Tasking | Execution | extended | partly |
+| T0835 | Manipulate I/O Image | Inhibit Response Function | extended | yes |
+| T0832 | Manipulation of View | Impact | extended | partly |
+| T0815 | Denial of View | Impact | extended | yes |
+| T0829 | Loss of View | Impact | extended | yes |
+| T0813 | Denial of Control | Impact | extended | partly |
+| T0827 | Loss of Control | Impact | extended | yes |
+| T0826 | Loss of Availability | Impact | extended | yes |
+| T0880 | Loss of Safety | Impact | conditional | only if modelled |
+| T0879 | Damage to Property | Impact | conditional | only if modelled |
+
+18 techniques in total. If the product owner asks for a coverage number, the honest
+one for Sprint 2 is the eight core techniques.
+
 ---
+
+## Core set
 
 ### T0836 Modify Parameter
 Tactic: Impair Process Control
@@ -194,6 +230,176 @@ actions also cause this, which is why wrong responses have a cost.
 
 ---
 
+## Extended set
+
+### T0821 Modify Controller Tasking
+Tactic: Execution
+
+What it looks like on our line: The timing of the work changes rather than one
+value. A machine runs its task more or less often than it should, or one machine
+gets priority over another for a shared input. In FactorySimPy the closest knob is
+`in_edge_selection`, which decides which input edge a machine pulls from. The
+signature is a periodic pattern in cycle time, or one branch of the line starving
+while another is fed.
+
+Observable in process data? partly. A regular pattern is visible if Team B looks
+at timing over a window and not just single values.
+
+In scope because: It is the other candidate for `sequence_violation`, next to
+T0889. T0889 changes what the logic does, T0821 changes when it runs.
+
+**Unsure:** in FactorySimPy both "program" and "tasking" come down to how a node
+behaves, so we may not be able to inject T0821 and T0889 in ways that look
+different. We should only count both if Juan Carlos can.
+
+### T0835 Manipulate I/O Image
+Tactic: Inhibit Response Function
+
+What it looks like on our line: The machine acts on false inputs while the
+telemetry stays truthful. For example a machine is told its output buffer is full
+and stops sending items, while the reported buffer level shows space. The
+signature is a machine blocked while the next buffer has room.
+
+Observable in process data? yes, as long as both the machine state and the buffer
+level are in the telemetry.
+
+In scope because: It is the mirror of T1692.002. There the view is false and the
+process is fine. Here the process is wrong and the view is correct. Having both
+in the labeled set helps check whether Team B can tell them apart, and the right
+response is different. Isolating the machine makes sense here, but not for a
+spoofed report.
+
+**Unsure:** FactorySimPy has no PLC and no I/O image. We would fake it by changing
+what a machine sees about its neighbours. Nodes have a `blocking` parameter but
+we have not checked whether this can be overridden mid run.
+
+### T0832 Manipulation of View
+Tactic: Impact
+
+What it looks like on our line: Whoever reads the telemetry sees a false picture.
+On our line that is Team B's detector, our response layer and the modelled
+operator. This is the result of T1692.002.
+
+Observable in process data? partly, for the same reasons as T1692.002.
+
+In scope because: Our layer reads the view too. A manipulated view is what leads
+us to take the wrong action, so it sits behind the cost of wrong responses
+measurement.
+
+**Unsure:** this overlaps with T1692.002 completely in our data. It is listed as the
+Impact side of that technique, not as a separate injection.
+
+### T0815 Denial of View
+Tactic: Impact
+
+What it looks like on our line: A temporary gap in telemetry from part or all of
+the line. The line keeps running but nobody can see it for a while. This is the
+result of T1691.002.
+
+Observable in process data? yes. Missing samples are easy to see.
+
+In scope because: The policy needs an answer for "we are blind for a while". Right
+now there is no rule for it. Tier 1 (alert the operator) seems right for a short
+gap.
+
+### T0829 Loss of View
+Tactic: Impact
+
+What it looks like on our line: The same as T0815, but the telemetry does not come
+back.
+
+Observable in process data? yes, as a lasting absence of data.
+
+In scope because: A long blind period is where the response should change. After
+enough time without data, safe mode (tier 3, with operator confirmation) may be
+the only defensible action, since we cannot see whether the line is being
+damaged.
+
+**Unsure:** how long a gap has to last to count as loss instead of denial. It
+should be some number of cycle times, and the cycle time is still an open
+question.
+
+### T0813 Denial of Control
+Tactic: Impact
+
+What it looks like on our line: For a while, commands to the line do not take
+effect. In our setup the only commands are our own response actions, so this
+means an isolate or safe mode that is logged as sent but does not change anything
+in the process.
+
+Observable in process data? partly. It is only visible if we check the process
+after our own action, not just log that we sent it.
+
+In scope because: It tests our own layer directly. The watchdog (build step 9) and
+the precondition check before return to normal (step 8) are there for this case.
+
+### T0827 Loss of Control
+Tactic: Impact
+
+What it looks like on our line: The lasting version of T0813. Isolate and safe mode
+both fail and the machine keeps running at the attacked settings, even after the
+injection stops.
+
+Observable in process data? yes. The deviation continues after our response.
+
+In scope because: It is the failure case for time to safe state and recovery
+success rate. If the line never reaches a safe state, the measurement has to
+record that as a failure and not leave the run out.
+
+### T0826 Loss of Availability
+Tactic: Impact
+
+What it looks like on our line: Part of the line, or all of it, produces nothing.
+T0828 is about reduced output. This one is about zero output.
+
+Observable in process data? yes. The Sink count stops.
+
+In scope because: Our own tier 2 and tier 3 actions cause this on purpose. When we
+measure the cost of wrong responses we need to separate downtime caused by the
+attacker from downtime caused by us. Having the technique in the table makes that
+split explicit.
+
+**Unsure:** this overlaps a lot with T0828. They may end up as one row.
+
+---
+
+## Conditional set
+
+These two depend on the open question of whether anything in the simulation
+represents physical harm. They are written up now so they are ready if the answer
+is yes.
+
+### T0880 Loss of Safety
+Tactic: Impact
+
+What it looks like on our line: Only applies if the simulation has a safety
+function, for example a machine that must stop when a value crosses a limit. The
+attack would be the limit being crossed and the stop not happening.
+
+Observable in process data? only if a safety function is modelled.
+
+In scope because: It is the strongest reason for tier 3 to exist. It would also
+give the paired on/off measurement a harm number, not just a throughput number.
+
+**Unsure:** nothing like this is in the FactorySimPy docs. We may have to add it
+ourselves, and then we need to be clear in the report that we added it.
+
+### T0879 Damage to Property
+Tactic: Impact
+
+What it looks like on our line: Only applies if the simulation tracks wear or
+damage, for example a machine that is damaged after running outside its band for
+too long, or after rapid stop and start cycles from T0806.
+
+Observable in process data? only if damage is modelled as a state.
+
+In scope because: Without it, process impact avoided can only be measured as lost
+throughput. With it we could also report damage avoided.
+
+**Unsure:** same as T0880. Not in the FactorySimPy docs as far as we can tell.
+
+---
+
 ## Considered and excluded
 
 Most of these leave no process signature, which is exclusion two in our proposal.
@@ -225,18 +431,14 @@ Some also fall under the network layer exclusions.
 - **Alarms:** T0878 Alarm Suppression, T0838 Modify Alarm Settings. The simulation
   has no alarm system. In our setup the alarm is Team B's detector, and if that is
   suppressed no alert reaches us at all, so there is nothing for our layer to do.
-- **No equivalent in FactorySimPy:** T0835 Manipulate I/O Image and T0877 I/O Image
-  (no PLC I/O image), T0858 Change Operating Mode (no documented modes), T0809 Data
-  Destruction (no data stores). **Unsure** on T0858. If Juan Carlos finds machine
-  modes, it should come back in.
-- **Overlapping Impact techniques:** T0826 Loss of Availability, T0827 Loss of
-  Control, T0813 Denial of Control, T0815 Denial of View, T0829 Loss of View, T0832
-  Manipulation of View. Real, but in our data they look the same as T0831, T0828 or
-  T1691.002. Kept out to avoid counting the same signal twice.
-- **Pending, not excluded yet:** T0879 Damage to Property, T0880 Loss of Safety,
-  T0837 Loss of Protection. These depend on the open question of whether anything in
-  the simulation represents physical harm or a safety system. If it does, T0880
-  should probably be in scope, because our paired on/off measurement depends on it.
+- **No equivalent in FactorySimPy:** T0877 I/O Image (reading the I/O image, no
+  process change), T0858 Change Operating Mode (no documented modes), T0809 Data
+  Destruction (no data stores). **Unsure** on T0858. Its modes include Stop, which
+  would look like T0816 on our line. If Juan Carlos finds machine modes, it should
+  come back in.
+- **T0837 Loss of Protection:** about protective functions like relays and
+  breakers. Nothing like that is in the simulation, and if a safety function gets
+  added, T0880 already covers it.
 
 ---
 
@@ -258,6 +460,14 @@ instead of ATT&CK IDs.
 | T0816 | machine throughput drops to zero for a period | none yet |
 | T0889 | items out of order or skipping a step | `sequence_violation` |
 | T0831, T0828 | outcomes, see above | n/a |
+| T0821 | periodic timing pattern, one branch starved | `sequence_violation` maybe |
+| T0835 | machine blocked while next buffer has room | none yet |
+| T0832 | same as T1692.002 | same as T1692.002 |
+| T0815 | short telemetry gap | none yet |
+| T0829 | telemetry gone for longer than a threshold | none yet |
+| T0813, T0827 | our action sent but the process does not change | none, our watchdog catches it, not Team B |
+| T0826 | Sink count stops | none yet |
+| T0880, T0879 | only if modelled | n/a |
 
 Questions for Joshua and Team B:
 
@@ -267,3 +477,6 @@ Questions for Joshua and Team B:
 2. Should the `technique` field in `policy.yaml` hold the ATT&CK ID so coverage can
    be counted straight from the file?
 3. Who builds the telemetry layer that T1692.002 and T1691.002 attack?
+4. Does Team B emit an alert when telemetry goes missing (T0815, T0829), or do we
+   detect the gap ourselves? If nobody does, being blind never triggers a
+   response.
