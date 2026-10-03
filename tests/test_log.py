@@ -1,4 +1,6 @@
 import json
+import pathlib
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,8 +26,16 @@ def log_file(tmp_path, monkeypatch):
     return path
 
 
+def strict_loads(line):
+    # Python's json accepts NaN and Infinity, other readers do not. Refuse them
+    # here so every test also checks the lines are standard JSON.
+    def refuse(token):
+        raise ValueError(f"non-standard JSON constant {token}")
+    return json.loads(line, parse_constant=refuse)
+
+
 def read_lines(path):
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    return [strict_loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def test_one_entry_per_alert(log_file):
@@ -78,7 +88,54 @@ def test_unwritable_log_does_not_crash(tmp_path, monkeypatch, caplog):
     assert "could not write response log entry" in caplog.text
 
 
-def test_receiver_records_received_at(log_file):
+def test_concurrent_writes_are_not_lost_or_mixed(log_file):
+    # Entries well over the 8 KB write buffer, from many threads at once, like
+    # the uvicorn thread pool under load. Without the lock this lost lines.
+    threads, per_thread = 20, 10
+    start = threading.Barrier(threads)
+
+    def worker(t):
+        start.wait()
+        for i in range(per_thread):
+            log.write({"alert_id": f"{t}-{i}", "affected_subsystem": "x" * 40000}, RULE)
+
+    pool = [threading.Thread(target=worker, args=(t,)) for t in range(threads)]
+    for t in pool:
+        t.start()
+    for t in pool:
+        t.join()
+    ids = sorted(e["alert_id"] for e in read_lines(log_file))
+    assert ids == sorted(f"{t}-{i}" for t in range(threads) for i in range(per_thread))
+
+
+def test_nan_and_infinity_still_give_valid_json(log_file):
+    log.write({"alert_id": "a1", "confidence": float("nan"),
+               "affected_subsystem": {"reading": float("inf")}}, None)
+    entry = read_lines(log_file)[0]
+    assert entry["confidence"] == "nan"
+    assert entry["affected_subsystem"] == {"reading": "inf"}
+
+
+def test_line_endings_are_lf_on_every_os(log_file):
+    log.write(ALERT, RULE)
+    log.write(ALERT, RULE)
+    assert b"\r\n" not in log_file.read_bytes()
+
+
+def test_rule_missing_keys_does_not_crash(log_file):
+    log.write(ALERT, {"tier": 1})
+    entry = read_lines(log_file)[0]
+    assert entry["rule"] is None
+    assert entry["tier"] == 1
+
+
+def test_default_log_path_does_not_depend_on_working_directory():
+    repo = pathlib.Path(__file__).resolve().parent.parent
+    assert log.LOG.is_absolute()
+    assert log.LOG == repo / "logs" / "response.jsonl"
+
+
+def test_receiver_records_received_at_and_decision_time(log_file):
     from receiver.main import app
 
     r = TestClient(app).post("/alert", json=ALERT)
@@ -86,3 +143,16 @@ def test_receiver_records_received_at(log_file):
     entry = read_lines(log_file)[0]
     assert entry["received_at"] is not None
     assert entry["received_at"] <= entry["logged_at"]
+    assert isinstance(entry["decision_ms"], float)
+    assert entry["decision_ms"] >= 0
+
+
+def test_receiver_logs_unmatched_alert(log_file):
+    # Records today's behaviour only. What no-match should do is still a team
+    # decision, this just makes sure the line is written either way.
+    from receiver.main import app
+
+    r = TestClient(app).post("/alert", json={**ALERT, "incident_class": "not_a_class"})
+    assert r.json() == {"decision": "no_rule_matched"}
+    entry = read_lines(log_file)[0]
+    assert entry["rule"] is None and entry["tier"] is None
