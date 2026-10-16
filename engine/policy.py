@@ -9,6 +9,12 @@ def load_policy(path=DEFAULT_PATH):
         return yaml.safe_load(f)["rules"]
 
 
+def load_settings(path=DEFAULT_PATH):
+    """Timings and limits from the same file, so policy stays in config."""
+    with open(path) as f:
+        return yaml.safe_load(f)["settings"]
+
+
 def pick_tier(alert, rules):
     """Return the matching rule with the highest tier, or None if nothing matches."""
     matches = [

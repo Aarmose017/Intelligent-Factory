@@ -1,21 +1,31 @@
 # Each rule maps an incident class and a confidence floor to an action tier.
-# Tiers: 0 log only, 1 alert operator, 2 isolate subsystem, 3 degrade to safe mode.
+# technique is the ATT&CK for ICS ID from docs/threat-analysis.md, so coverage can be counted from this file.
+# Tiers: 0 log only, 1 alert operator, 2 isolate subsystem, 3 degrade to safe mode (operator confirms first).
 # When two rules match, the higher tier wins.
 rules:
-  - technique: sensor_drift_high
+  - technique: T0836
     incident_class: sensor_drift
     min_confidence: 0.8
     tier: 2
-    reason: "High confidence drift, isolate the subsystem"
+    reason: "Parameter clearly out of band, isolate the machine"
 
-  - technique: sensor_drift_low
+  - technique: T0836
     incident_class: sensor_drift
     min_confidence: 0.4
     tier: 1
-    reason: "Possible drift, alert the operator only"
+    reason: "Parameter drifting, alert the operator only"
 
-  - technique: sequence_violation
+  - technique: T0889
     incident_class: sequence_violation
     min_confidence: 0.5
-    tier: 2
-    reason: "Steps running out of order, isolate"
+    tier: 3
+    reason: "Items skipping a step are bad product, stop the line safely"
+
+# All times are simulation seconds.
+settings:
+  correlation_window: 10   # an incident keeps absorbing matching alerts this long after its last one
+  operator_delay: 5        # stand-in for the operator confirming tier 3, and for clearing the cause before recovery
+  check_period: 1          # how often containment and the return-to-normal precondition are checked
+  rate_limit:              # disruptive actions (tier 2 and 3) allowed per window, extra ones drop to tier 1
+    max_actions: 2
+    per_seconds: 60

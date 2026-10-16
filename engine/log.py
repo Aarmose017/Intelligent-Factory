@@ -32,7 +32,7 @@ def _finite(value):
     return value
 
 
-def write(alert, rule, received_at=None, decision_ms=None):
+def write(alert, rule, received_at=None, decision_ms=None, **extra):
     """Append one JSON object per line. Every measurement later reads this file.
 
     emitted_at and observed_at come from Team B's alert. received_at is when our
@@ -60,6 +60,7 @@ def write(alert, rule, received_at=None, decision_ms=None):
         "affected_subsystem": alert.get("affected_subsystem"),
         "rule": rule.get("technique"),
         "tier": rule.get("tier"),
+        **extra,  # incident events: event, incident_id, sim time t, and the tier actually used
     }
     try:
         line = json.dumps(_finite(entry), default=str, allow_nan=False)
