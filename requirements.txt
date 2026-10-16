@@ -3,3 +3,5 @@ uvicorn
 pyyaml
 pytest
 httpx
+# Pinned: isolate relies on Machine.worker_thread, an internal detail that a new release could change.
+factorysimpy==0.1.0b3
