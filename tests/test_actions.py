@@ -1,6 +1,8 @@
 from actions.line import LineControl
 from engine.policy import load_policy, load_settings
 from engine.respond import Responder
+from sim.attacks import drift, skip_step
+from sim.detector import detector
 from sim.line import build, quiet
 from sim.scenario import run
 
@@ -30,6 +32,32 @@ def test_drift_alerts_operator_then_isolates_once_and_recovers_after_the_attack(
     assert any(e["event"] == "precondition_failed" for e in log)  # attacker still active, so no early restart
     assert at(log, "resolved") > labels[0]["end"]
     assert nodes["MACHINE1"].processing_delay == 1.1 and responder.control.held == {}
+
+
+def test_isolated_machine_works_again_after_recovery(events):
+    responder, nodes, _ = run("drift")
+    assert responder.incidents.all[0]["state"] == "resolved"
+    processed = nodes["MACHINE1"].stats["num_item_processed"]
+    with quiet():
+        responder.env.run(until=responder.env.now + 20)
+    assert nodes["MACHINE1"].stats["num_item_processed"] > processed
+
+
+def test_overlapping_attacks_both_resolve_and_the_line_restarts(events):
+    env, nodes = build()
+    labels = []
+    responder = Responder(load_policy(), SETTINGS, env, LineControl(env, nodes))
+    env.process(drift(env, labels, nodes["MACHINE1"], 20, 60))
+    env.process(skip_step(env, labels, nodes["BUF1"], nodes["BUF2"], "MACHINE1", 30, 50))
+    env.process(detector(env, nodes, lambda a: responder.handle(a, env.now)))
+    with quiet():
+        env.run(until=200)
+    assert {i["incident_class"] for i in responder.incidents.all} == {"sensor_drift", "sequence_violation"}
+    assert all(i["state"] == "resolved" for i in responder.incidents.all)  # no deadlock between the two
+    received = nodes["SINK"].stats["num_item_received"]
+    with quiet():
+        env.run(until=220)
+    assert nodes["SINK"].stats["num_item_received"] > received
 
 
 def test_one_incident_gets_exactly_one_isolation(events):

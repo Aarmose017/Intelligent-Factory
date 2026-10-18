@@ -1,4 +1,5 @@
 import pathlib
+import re
 
 import pytest
 
@@ -28,6 +29,16 @@ def test_broken_policy_fails_at_load_with_a_readable_error(tmp_path, broken, mes
     (tmp_path / "policy.yaml").write_text(bad, encoding="utf-8")
     with pytest.raises(ValueError, match=message):
         load_policy(tmp_path / "policy.yaml")
+
+
+def test_every_rule_names_an_attack_technique():
+    assert all(re.fullmatch(r"T\d{4}", r["technique"]) for r in RULES)
+
+
+def test_settings_hold_the_agreed_limits():
+    settings = policy.load_settings()
+    assert settings["rate_limit"] == {"max_actions": 2, "per_seconds": 60}
+    assert settings["operator_delay"] == 5 and settings["correlation_window"] == 10
 
 
 def test_policy_path_does_not_depend_on_working_directory():
