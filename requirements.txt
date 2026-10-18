@@ -1,7 +1,8 @@
-fastapi
-uvicorn
-pyyaml
-pytest
-httpx
-# Pinned: isolate relies on Machine.worker_thread, an internal detail that a new release could change.
+# Pinned to the versions tested on Python 3.14 (2026-10-18), so a new release cannot break CI on its own.
+fastapi==0.143.5
+uvicorn==0.54.0
+pyyaml==6.0.3
+pytest==9.1.1
+httpx==0.28.1
+# isolate relies on Machine.worker_thread, an internal detail that a new release could change.
 factorysimpy==0.1.0b3
