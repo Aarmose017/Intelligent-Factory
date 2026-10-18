@@ -70,6 +70,34 @@ def test_without_a_line_actions_are_logged_not_carried_out(events):
     assert decisions(events())[0]["action"] == "isolate"
 
 
+def test_alert_that_is_not_an_object_is_rejected_and_logged(events):
+    # B2: anything but a dict crashed the responder.
+    responder = Responder(load_policy(), SETTINGS)
+    for bad in (None, [], "x"):
+        assert responder.handle(bad, 0) is None
+    assert [e["event"] for e in events()] == ["rejected"] * 3
+    assert responder.incidents.all == []
+
+
+def test_higher_tier_alert_right_after_recovery_does_not_reopen_the_incident(events):
+    # B3: a stale alert asking for a higher tier started safe state on a resolved incident, then the
+    # second resolve crashed the simulation. Needs a class with both a tier 2 and a tier 3 rule.
+    rules = load_policy() + [{"technique": "T0836", "incident_class": "sensor_drift",
+                              "min_confidence": 0.95, "tier": 3}]
+    env, nodes = build()
+    responder = Responder(rules, SETTINGS, env, LineControl(env, nodes))
+    drift_alert = {"incident_class": "sensor_drift", "affected_subsystem": "MACHINE1"}
+    incident = responder.handle({**drift_alert, "confidence": 0.9}, 0)
+    with quiet():
+        env.run(until=40)
+    assert incident["state"] == "resolved"
+    responder.handle({**drift_alert, "confidence": 0.99}, incident["resolved_at"] + 1)
+    with quiet():
+        env.run(until=120)
+    assert incident["actions"] == ["isolate"] and events()[-1]["event"] == "suppressed"
+    assert responder.control.stopped_at is None  # the line was not put into safe state
+
+
 def test_same_seed_same_timeline(events):
     run("drift")
     first = [(e["event"], e.get("t"), e.get("action")) for e in events()]

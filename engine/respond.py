@@ -14,6 +14,9 @@ class Responder:
         self.disruptive = []  # times of tier 2 and 3 actions, for the rate limit
 
     def handle(self, alert, now):
+        if not isinstance(alert, dict):
+            log.write(alert, None, now, event="rejected", reason="alert is not an object", t=now)
+            return None
         inc, new = self.incidents.correlate(alert, now)
         rule = pick_tier(alert, self.rules)
         tier, why = (rule["tier"] if rule else None), None
@@ -23,8 +26,10 @@ class Responder:
                 tier, why = 1, "unknown_subsystem"  # the alert names something we cannot isolate
             elif len([t for t in self.disruptive if now - t < limit["per_seconds"]]) >= limit["max_actions"]:
                 tier, why = 1, "rate_limited"
-        # Suppression: an incident only gets another action when an alert asks for a higher tier than it has.
-        if not new and (tier is None or tier <= (-1 if inc["tier"] is None else inc["tier"])):
+        # Suppression: an incident only gets another action when an alert asks for a higher tier than it has,
+        # and never once it is resolved. Alerts landing just after recovery are stale readings.
+        if not new and (inc["state"] == "resolved" or tier is None
+                        or tier <= (-1 if inc["tier"] is None else inc["tier"])):
             log.write(alert, rule, now, event="suppressed", reason=why, incident_id=inc["id"], tier=tier, t=now)
             return inc
         if tier is not None and tier >= 2:
