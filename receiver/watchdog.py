@@ -4,6 +4,9 @@ Fail-open: if the response layer goes down, the line keeps running without prote
 just because our own software died, since that would turn killing our process into a way to stop production.
 Instead the watchdog raises an operator alert when the heartbeat stops, and another when it comes back.
 
+Limit: on Windows a refused local connection is retried for about 2 seconds before failing, so an outage shorter
+than that can go unseen. Measured 2026-10-18; a 6 second outage gave exactly one down and one up alert.
+
     python -m receiver.watchdog [health_url] [period_seconds]
 """
 import sys
