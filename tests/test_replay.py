@@ -1,5 +1,5 @@
 from engine import log
-from sim.replay import replay
+from sim.replay import replay, show
 
 
 def small(tmp_path, name):
@@ -24,6 +24,20 @@ def test_same_seeds_give_the_same_numbers(tmp_path):
 def test_coverage_counts_threat_analysis_techniques_with_an_action(tmp_path):
     c = replay(seeds=range(1), operator_delays=(5,), out=tmp_path)["coverage"]
     assert c["techniques_in_threat_analysis"] == 18 and c["covered"] == ["T0836", "T0889"]
+
+
+def test_printed_table_matches_the_computed_numbers(tmp_path, capsys):
+    results = replay(seeds=range(2), operator_delays=(5,), out=tmp_path)
+    show(results)
+    out = capsys.readouterr().out
+    row = results["by_delay"]["5"]["skip_step / layer on"]
+    printed = next(line for line in out.splitlines() if "skip_step / layer on" in line)
+    s = row["safe_state_s"]
+    assert f"safe state {s['median']:.1f}/{s['worst']:.1f}" in printed
+    assert f"recovered {row['recovery_rate']:.0%}" in printed and f"bad {row['bad_items']:.0f}" in printed
+    clean = next(line for line in out.splitlines() if "clean / layer off" in line)
+    assert "detect -" in clean and "safe state -" in clean and "wrong  -" in clean  # nothing measured shows as -
+    assert "2 of 18" in out
 
 
 def test_replay_leaves_the_live_log_alone(tmp_path):
