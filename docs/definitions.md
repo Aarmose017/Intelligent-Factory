@@ -15,8 +15,11 @@ between 0 and 1 and an `affected_subsystem`, in the format of
 `schema/sample_alert.json`.
 
 **Incident.** What our layer treats as one problem on the line. It can be built
-from many alerts and gets one record and one decision. Until the correlation
-window exists (build step 5), every alert is its own incident.
+from many alerts and gets one record. An alert joins it if it has the same class
+and subsystem and the incident is unresolved, or was resolved less than one
+correlation window ago. A later alert only causes another action if it asks for a
+higher tier. **Proposal:** CLAUDE.md says one decision per incident, and moving up
+a tier needs Joshua's agreement.
 
 **Action tier.** How disruptive our response is, picked by the policy rule that
 matches the incident. 0 log only, 1 alert the operator, 2 isolate the subsystem,
@@ -30,14 +33,14 @@ take effect (environment notes, traps 1 to 3). **Proposal:** only tier 2 and 3
 can contain an incident, since tier 0 and 1 do not touch the line.
 
 **Resolved.** The line is back to normal operation, the precondition check before
-return to normal has passed (build step 8), and the incident is closed. There is
-no working way to restart a stopped node yet, so nothing can reach resolved after
-a tier 2 or 3 action today.
+return to normal has passed (build step 8), and the incident is closed. The
+precondition is that the settings stayed at their normal values for a whole
+correlation window, so the line never restarts while an attacker is still active.
 
 **Safe state.** **Proposal**, to agree with Mohammed: the Source stops generating,
 every item already on the line reaches the Sink, and every machine is idle.
-Nothing enters and nothing is left in progress. This has been tested and works
-(environment notes, trap 3). It is what tier 3 drives the line to. Check it with
+Nothing enters and nothing is left in progress. This is built and tested
+(`actions/line.py`). It is what tier 3 drives the line to. Check it with
 counts, Sink received equal to Source generated, not with the Source's `state`,
 which still reads `GENERATING_STATE` after it has been stopped.
 
@@ -56,8 +59,9 @@ it, so it is used in our labels and in policy coverage, not in alerts.
 cannot find the node.
 
 **Isolate.** The tier 2 action. Stop one subsystem so that items no longer flow
-through it. Today the only tested way is a very large `processing_delay`
-(environment notes, trap 3). On a straight line this stops everything: the buffer
+through it. We claim every worker slot of the machine, so it finishes what it holds
+and takes nothing new, and releasing them restarts it. During safe state isolate
+does nothing, because the line is already stopping. On a straight line this stops everything: the buffer
 before it fills, the Source blocks and the Sink gets nothing. It only means
 partial production loss, as CLAUDE.md assumes, if the line has a parallel branch
 that keeps running.
@@ -78,12 +82,14 @@ in the baseline.
 getting the confirmation. It stands in for a person, so replays give the same
 result every time.
 
-**Wrong response.** An action of tier 1 or higher on an incident that has no
-matching injection in our labeled attack set. Its stoppage and downtime count
+**Wrong response.** An action of tier 1 or higher that does not match an attack
+in our labeled set: no attack was running, the incident class is wrong, or it came
+outside the attack plus one correlation window. Its stoppage and downtime count
 toward the cost of wrong responses.
 
 **Time unit.** **Proposal**, to agree with Mohammed: one simulation tick is one
-second, with a 3 second cycle (`processing_delay` 3, `inter_arrival_time` 2).
+second. On our line (Team B's) an item enters every 0.8 s and takes 1.1 s on one
+of 4 workers, about 75 items a minute.
 
 ## Timestamps
 
@@ -97,5 +103,7 @@ All four are in every log line and are UTC, ISO 8601.
 | `logged_at` | us | when the decision was written |
 
 `decision_ms` is our own time from receipt to decision, measured on a monotonic
-clock. Time to decision is measured from `received_at`. Time to safe state is
-measured from `received_at` until the line is drained, operator delay included.
+clock. On the live receiver, time to decision is measured from `received_at`. In
+the replay harness (`docs/sprint4-results.md`) every time is measured from the
+attack's start in its ground-truth label instead, so it includes detection. Time
+to safe state runs until the line is drained, operator delay included.

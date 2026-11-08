@@ -180,11 +180,10 @@ a false positive is most likely, since machines stop for normal reasons too, so 
 feeds the cost of wrong responses measurement.
 
 **Unsure:** FactorySimPy has machine states but no breakdowns, so we implement this
-ourselves. Shutdown works: a very large `processing_delay` stops the machine.
-Restart does not. Setting the delay back does not wake a machine that is already in
-its long wait (environment notes, trap 3). So today we can inject a shutdown but not
-a restart. Interrupting the machine's SimPy process is the next thing to try. The
-same gap blocks our own return to normal action.
+ourselves. Shutdown and restart both work now: our isolate action claims every worker
+slot of the machine and releasing them restarts it (environment notes, trap 3). An
+attack injecting T0816 could use the same mechanism, but it is not built as an attack
+yet.
 
 ### T0889 Modify Program
 Tactic: Persistence
@@ -336,10 +335,10 @@ the only defensible action, since we cannot see whether the line is being
 damaged.
 
 **Unsure:** how long a gap has to last to count as loss instead of denial. It
-should be some number of cycle times. The environment notes propose a 3 second
-cycle (one time unit as one second, `processing_delay` 3), still to be agreed with
-the product owner. If that holds, something like ten cycles, 30 seconds, is a
-starting point, but that number is a guess.
+should be some number of cycle times. On our line an item enters every 0.8 time
+units, and the proposal still to be agreed with the product owner is one time unit
+as one second. A threshold of 10 to 30 seconds is a starting point, but that number
+is a guess.
 
 ### T0813 Denial of Control
 Tactic: Impact
@@ -473,9 +472,10 @@ Some also fall under the network layer exclusions.
 
 The policy table matches on `incident_class`, which is what Team B emits. Team B
 cannot tell which technique caused an alert, only what the process did. So the
-mapping goes technique to the signature it leaves to the incident class. Right now
-`policy.yaml` has two classes and uses made up names in the `technique` field
-instead of ATT&CK IDs.
+mapping goes technique to the signature it leaves to the incident class.
+`policy.yaml` has two classes, and since Sprint 3 its `technique` field holds the
+ATT&CK ID (T0836, T0889), so coverage is counted straight from the file: 2 of the
+18 techniques here have an action.
 
 | Technique | Signature | Current class |
 |---|---|---|
@@ -502,7 +502,7 @@ Questions for Joshua and Team B:
    time change is a parameter change (T0836), not a drifting sensor. Should the
    classes be renamed to describe the signature, for example `cycle_time_deviation`?
 2. Should the `technique` field in `policy.yaml` hold the ATT&CK ID so coverage can
-   be counted straight from the file?
+   be counted straight from the file? Answered: yes, done in Sprint 3.
 3. Who builds the telemetry layer that T1692.002 and T1691.002 attack?
 4. Does Team B emit an alert when telemetry goes missing (T0815, T0829), or do we
    detect the gap ourselves? If nobody does, being blind never triggers a

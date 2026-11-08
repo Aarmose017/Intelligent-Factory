@@ -116,7 +116,9 @@ env.process(attack(env, m))
 
 **Trap 2, machine state.** Setting `machine.state` does not change what the machine does. After forcing `m.state = "BLOCKED_STATE"` at T=10, the attribute still read `BLOCKED_STATE` at T=11.0, and by T=11.5 the machine had overwritten it on its next real state change. It processed 12 items by T=40, the same as with no change. So `state` cannot be used to stop or isolate a machine. It does give us a clean way to inject a spoofed report (T1692.002 in the threat analysis), since the telemetry lies while the process carries on normally.
 
-**Trap 3, stopping is one way.** A very large value stops a node. With `processing_delay = 1e9` at T=20, the Sink got 6 items by T=60 against 19 with no change. With the Source `inter_arrival_time = 1e9` at T=20, the Source stopped at 10 items and the Sink received all 10, so the line drained. But setting the value back does not undo it. The node is already inside its long wait and does not see the new value. Restoring the normal value at T=30 still left the Sink at 6 (machine) and 10 (Source) by T=80, against 25 with no change. So this works for stopping and for safe state, but return to normal needs a different mechanism, for example interrupting the node's SimPy process. Not tested yet.
+**Trap 3, stopping is one way.** A very large value stops a node. With `processing_delay = 1e9` at T=20, the Sink got 6 items by T=60 against 19 with no change. With the Source `inter_arrival_time = 1e9` at T=20, the Source stopped at 10 items and the Sink received all 10, so the line drained. But setting the value back does not undo it. The node is already inside its long wait and does not see the new value. Restoring the normal value at T=30 still left the Sink at 6 (machine) and 10 (Source) by T=80, against 25 with no change. So this works for stopping and for safe state, but return to normal needs a different mechanism.
+
+**Solved in Sprint 3.** Isolate now claims every worker slot of the machine (`worker_thread`, a SimPy Resource), so the machine finishes what it holds and takes nothing new, and releasing the slots restarts it. Safe state still stops the Source with an infinite inter-arrival time, and resume starts a fresh Source loop because the old one never wakes. Both are in `actions/line.py` and covered by tests.
 
 ## 3. Cycle time
 
@@ -129,7 +131,7 @@ The two parameters that set the pace:
 
 In the example above, items arrive every 2 and processing takes 3, so the machine is the bottleneck and the effective cycle is 3 time units per item.
 
-**For the latency budget:** we choose the numbers, so we should pick them to look like a real line and then state the mapping. Proposal, to agree with Mohammed: one time unit equals one second, `processing_delay` 3, `inter_arrival_time` 2, giving a 3 second cycle. The latency target then becomes a fraction of 3 seconds.
+**For the latency budget:** we choose the numbers, so we should pick them to look like a real line and then state the mapping. The first proposal was `processing_delay` 3 and `inter_arrival_time` 2, a 3 second cycle. Since Sprint 3 we use Team B's line instead (items every 0.8, 1.1 per item, 4 workers in parallel), so an item enters every 0.8 time units. Proposal, to agree with Mohammed: one time unit equals one second, which is about 75 items a minute, normal for a fast discrete line.
 
 ## 4. What this settles
 
@@ -142,9 +144,9 @@ In the example above, items arrive every 2 and processing takes 3, so the machin
 
 ## 5. Still open
 
-**Safe state is not a library concept.** Nothing in FactorySimPy represents a safe state, so we define it ourselves. The obvious candidate is forcing the source to stop generating and letting the line drain. That now works in a test (trap 3, all 10 generated items reached the Sink), but it is still our design decision and needs writing down.
+**Safe state is not a library concept.** Nothing in FactorySimPy represents a safe state, so we define it ourselves: the Source stops generating and the line drains. It is built and tested (see `docs/definitions.md`), but it still needs Mohammed's agreement.
 
-**Return to normal has no mechanism yet.** Stopping by a large delay cannot be undone by restoring the value (trap 3). Build step 8 needs a way to pause and resume a node. Interrupting its SimPy process is the first thing to try.
+**Return to normal.** Solved in Sprint 3, see trap 3.
 
 **Nothing represents physical harm.** There is no damage, wear, scrap or off-spec output in the model. Our "process impact avoided" measure therefore needs a proxy. Candidates: items discarded (`num_item_discarded` exists on Source and Machine), time spent in `BLOCKED_STATE`, throughput lost against a clean baseline, or items processed with an out-of-band delay. Throughput lost is probably the cleanest. Needs agreeing with Mohammed.
 

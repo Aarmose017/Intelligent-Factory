@@ -5,7 +5,7 @@
   "observed_at": "2026-10-01T14:22:29Z",
   "incident_class": "sensor_drift",
   "confidence": 0.82,
-  "affected_subsystem": "machine_02",
+  "affected_subsystem": "MACHINE1",
   "observed_deviation": {
     "signal": "cycle_time_s",
     "expected_band": [10.0, 12.0],
