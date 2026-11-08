@@ -1,5 +1,5 @@
 from engine import log
-from sim.replay import replay, show
+from sim.replay import replay, show, summarise
 
 
 def small(tmp_path, name):
@@ -24,6 +24,12 @@ def test_same_seeds_give_the_same_numbers(tmp_path):
 def test_coverage_counts_threat_analysis_techniques_with_an_action(tmp_path):
     c = replay(seeds=range(1), operator_delays=(5,), out=tmp_path)["coverage"]
     assert c["techniques_in_threat_analysis"] == 18 and c["covered"] == ["T0836", "T0889"]
+
+
+def test_median_and_worst_are_computed_correctly():
+    # Found by mutation testing: reporting the best case as "worst" passed every other test.
+    assert summarise([3.0, 1.0, 2.0, None]) == {"median": 2.0, "worst": 3.0, "n": 3}
+    assert summarise([None, None]) is None and summarise([]) is None
 
 
 def test_printed_table_matches_the_computed_numbers(tmp_path, capsys):
