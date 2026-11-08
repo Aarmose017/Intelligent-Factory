@@ -44,7 +44,8 @@ def one_run(attack, seed, layer_on, settings, logfile):
     received, processed = nodes["SINK"].stats["num_item_received"], nodes["MACHINE1"].stats["num_item_processed"]
     bad = max(0, received - processed)  # items that reached the Sink without passing the machine
     return {"attack": attack, "seed": seed, "layer_on": layer_on, "labels": labels, "events": events,
-            "incidents": responder.incidents.all, "good_items": received - bad, "bad_items": bad}
+            "incidents": responder.incidents.all, "good_items": received - bad, "bad_items": bad,
+            "window": settings["correlation_window"]}
 
 
 def measures(run):
@@ -56,14 +57,22 @@ def measures(run):
         first.setdefault(d["action"], d["t"] - start)
     alerts = [e["t"] for e in run["events"] if e.get("alert_id")]
     contained3 = [e["t"] for e in run["events"] if e["event"] == "contained" and e.get("tier") == 3]
+    resolved = [e["t"] for e in run["events"] if e["event"] == "resolved"]
     disruptive = [i for i in run["incidents"] if (i["tier"] or 0) >= 2]
+    actions = [d for d in decisions if d["action"] not in ("no_rule", "log_only")]
+    label = run["labels"][0] if run["labels"] else None
+    # A wrong response: any action with no attack running, or one of the wrong class, or one outside the attack
+    # window plus the correlation window (late stale readings are absorbed within that window).
+    wrong = [d for d in actions if label is None or d["incident_class"] != label["incident_class"]
+             or not label["start"] <= d["t"] <= label["end"] + run["window"]]
     return {
         "detect_s": alerts[0] - start if alerts else None,
         "decide_s": first,
         "safe_state_s": contained3[0] - start if contained3 else None,
+        "resolve_s": resolved[-1] - start if resolved else None,
         "recovered": sum(i["state"] == "resolved" for i in disruptive), "disruptive": len(disruptive),
         "duplicate_actions": sum(len(i["actions"]) - len(set(i["actions"])) for i in run["incidents"]),
-        "actions": [d["action"] for d in decisions if d["action"] not in ("no_rule", "log_only")],
+        "wrong_actions": len(wrong),
         "good_items": run["good_items"], "bad_items": run["bad_items"],
     }
 
@@ -101,11 +110,12 @@ def replay(seeds=SEEDS, operator_delays=(5, 30), out=None):
                         "detect_s": summarise([m["detect_s"] for m in runs]),
                         "decide_s": {a: summarise([m["decide_s"].get(a) for m in runs]) for a in actions},
                         "safe_state_s": summarise([m["safe_state_s"] for m in runs]),
+                        "resolve_s": summarise([m["resolve_s"] for m in runs]),
                         "recovery_rate": (sum(m["recovered"] for m in runs) / sum(m["disruptive"] for m in runs)
                                           if any(m["disruptive"] for m in runs) else None),
                         "duplicate_actions": sum(m["duplicate_actions"] for m in runs),
-                        # On a clean run every action is a wrong response.
-                        "wrong_actions": sum(len(m["actions"]) for m in runs) if attack is None and layer_on else None,
+                        # Only counted with the layer on: with it off nothing is carried out.
+                        "wrong_actions": sum(m["wrong_actions"] for m in runs) if layer_on else None,
                         "good_items": statistics.mean(m["good_items"] for m in runs),
                         "bad_items": statistics.mean(m["bad_items"] for m in runs),
                     }
@@ -127,6 +137,7 @@ def show(results):
             decide = ", ".join(f"{a} {fmt(s)}" for a, s in r["decide_s"].items()) or "-"
             rate = f"{r['recovery_rate']:.0%}" if r["recovery_rate"] is not None else "-"
             print(f"  {name:24} detect {fmt(r['detect_s']):10} decide [{decide}]  safe state {fmt(r['safe_state_s']):10}"
+                  f" resolved {fmt(r['resolve_s']):11}"
                   f" recovered {rate:5} dup {r['duplicate_actions']} wrong {r['wrong_actions'] if r['wrong_actions'] is not None else '-':>2}"
                   f"  good {r['good_items']:.0f} bad {r['bad_items']:.0f}")
     print("\n(median/worst seconds from attack start)")
