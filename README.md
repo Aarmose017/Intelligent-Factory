@@ -24,6 +24,10 @@ Whole loop in the simulation (inject, detect, decide, act, recover), same seed g
 
 It writes logs/scenario.jsonl and the ground-truth logs/labels.jsonl, never the live receiver's log.
 
+Sprint 4 measurements, every attack on fixed seeds with our layer on and off:
+
+    python -m sim.replay                  # writes logs/replay/results.json
+
 Watchdog for a running receiver (fail-open: alerts the operator, never stops the line):
 
     python -m receiver.watchdog
