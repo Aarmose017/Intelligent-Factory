@@ -20,6 +20,8 @@ class LineControl:
     def isolate(self, machine_id):
         """Tier 2. Claim every worker slot, so the machine finishes what it holds and takes nothing new.
         Returns an event that fires once it has stopped."""
+        if self.stopped_at is not None:
+            return self.env.timeout(0)  # safe state already stops the line, and holding a machine blocks its drain
         if machine_id not in self.held:
             worker = self.machines[machine_id].worker_thread
             self.held[machine_id] = [worker.request() for _ in range(worker.capacity)]
@@ -43,17 +45,24 @@ class LineControl:
                 + sum(n.stats["num_item_discarded"] for n in [*self.sources.values(), *self.machines.values()]))
         return generated == done
 
+    def _settings(self, sources):
+        current = {k: m.processing_delay for k, m in self.machines.items()}
+        return {**current, **{k: s.inter_arrival_time for k, s in self.sources.items()}} if sources else current
+
     def restore_baseline(self):
+        # While in safe state the stopped Source is ours, so it is not touched here. Resetting it is what let
+        # one incident's recovery restart the line under another incident's safe state.
         for k, m in self.machines.items():
             m.processing_delay = self.baseline[k]
-        for k, s in self.sources.items():
-            s.inter_arrival_time = self.baseline[k]
+        if self.stopped_at is None:
+            for k, s in self.sources.items():
+                s.inter_arrival_time = self.baseline[k]
 
     def at_baseline(self):
-        """Return-to-normal precondition: every setting we can see is back where it started."""
-        current = {**{k: m.processing_delay for k, m in self.machines.items()},
-                   **{k: s.inter_arrival_time for k, s in self.sources.items()}}
-        return current == self.baseline
+        """Return-to-normal precondition: every setting we can see is back where it started. Our own stop of
+        the Source does not count as a change."""
+        sources = self.stopped_at is None
+        return self._settings(sources) == {k: self.baseline[k] for k in self._settings(sources)}
 
     def resume(self):
         """Undo isolate and safe state."""
@@ -61,7 +70,8 @@ class LineControl:
         if self.stopped_at is not None:
             # shortcut: the stopped Source loop sleeps forever, so a fresh one takes over. Item names restart
             # at 1, which only matters if anything starts keying on item ids.
-            for s in self.sources.values():
+            for k, s in self.sources.items():
+                s.inter_arrival_time = self.baseline[k]
                 self.env.process(s.behaviour())
             self.stopped_at = None
 
