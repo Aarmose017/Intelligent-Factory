@@ -31,6 +31,13 @@ def test_broken_policy_fails_at_load_with_a_readable_error(tmp_path, broken, mes
         load_policy(tmp_path / "policy.yaml")
 
 
+def test_confidence_exactly_at_a_threshold_counts_as_meeting_it():
+    # Found by mutation testing: changing >= to > in pick_tier passed every other test.
+    assert pick_tier({"incident_class": "sensor_drift", "confidence": 0.8}, RULES)["tier"] == 2
+    assert pick_tier({"incident_class": "sensor_drift", "confidence": 0.4}, RULES)["tier"] == 1
+    assert pick_tier({"incident_class": "sequence_violation", "confidence": 0.5}, RULES)["tier"] == 3
+
+
 def test_every_rule_names_an_attack_technique():
     assert all(re.fullmatch(r"T\d{4}", r["technique"]) for r in RULES)
 

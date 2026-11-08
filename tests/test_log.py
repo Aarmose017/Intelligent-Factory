@@ -158,6 +158,30 @@ def test_receiver_logs_unmatched_alert(log_file):
     assert entry["rule"] is None and entry["tier"] is None
 
 
+def test_nan_inside_a_list_still_gives_valid_json(log_file):
+    log.write({"alert_id": "a1", "affected_subsystem": [1.0, float("nan"), (float("-inf"),)]}, None)
+    assert read_lines(log_file)[0]["affected_subsystem"] == [1.0, "nan", ["-inf"]]
+
+
+def test_health_reports_the_rules_it_loaded():
+    from receiver.main import app
+
+    assert TestClient(app).get("/health").json() == {"status": "ok", "rules_loaded": 3}
+
+
+def test_stub_sends_the_sample_alert_and_it_is_logged(log_file, monkeypatch, capsys):
+    import httpx
+    from receiver.main import app
+    from stub import send_alert
+
+    client = TestClient(app)
+    monkeypatch.setattr(httpx, "post", lambda url, json: client.post("/alert", json=json))
+    send_alert.main(str(pathlib.Path(__file__).resolve().parent.parent / "schema" / "sample_alert.json"))
+    assert "200" in capsys.readouterr().out
+    entry = read_lines(log_file)[0]
+    assert entry["alert_id"] == "a1" and entry["tier"] == 2
+
+
 def test_receiver_does_not_crash_on_a_confidence_that_is_not_a_number(log_file):
     # B6: this was a 500 with nothing in the log.
     from receiver.main import app
