@@ -16,7 +16,8 @@ The alert schema is the only contract between the two teams.
 Aykhan Mammadli, team lead. Measurement and assurance, plus governance.
 Joshua Aranzazu. Detection contract and policy.
 Aaron Jeloni Moseley. Response engineering.
-Juan Carlos Perez Ojea. Threat stimulus and environment.
+Juan Carlos Perez Ojea. Threat stimulus and environment. Inactive since October;
+his area (sim/, attacks, labels, environment notes) is now Aykhan's.
 
 Product Owner: Mohammed Al Duniawi, PhD student under Dr. Ruimin Sun, FIU.
 Course instructor: Prof. Masoud Sadjadi.
@@ -29,7 +30,8 @@ boundary.
 
 - Alerts: JSON over HTTP, FastAPI receiver. Offline replay reads JSON from a folder.
 - Policy: YAML, read at startup. Never hardcode policy in Python.
-- Incidents: SQLite, from Sprint 3.
+- Incidents: SQLite planned. For now they are kept in memory, and every state change
+  is in the JSONL log.
 - Logs: JSON Lines, one object per line, append only.
 - Tests: pytest, GitHub Actions on push.
 - No rules engine. Plain Python matching is enough for roughly fifty rules.
@@ -63,14 +65,16 @@ boundary.
 - No real industrial data or hardware. Everything stays in FactorySimPy.
 - No network traffic analysis. Process telemetry only.
 
-## Open questions, unresolved
+## Open questions, now answered
 
-- Can FactorySimPy be written to, or only observed? If read-only, actions have to
-  be commands the simulation picks up on its own tick rather than direct calls.
-- Is there a physically meaningful safe state in the model?
-- Does anything in the simulation represent physical harm? Our paired on/off
-  measurement depends on it.
-- What is the line's cycle time? The latency target is a fraction of it.
+- Can FactorySimPy be written to? Yes. Plain attributes, changed mid-run, so actions
+  call the simulation directly (docs/environment-notes.md).
+- Is there a safe state in the model? Not as a library concept. Ours is: the Source
+  stops and the line drains. Built and tested, still needs the Product Owner's sign-off.
+- Does anything represent physical harm? No. The proxy is good and bad items at the
+  Sink, still needs the Product Owner's sign-off.
+- What is the cycle time? Not fixed. On Team B's line an item enters every 0.8 time
+  units. Proposal: one time unit is one second.
 
 ## Build order
 
@@ -78,7 +82,8 @@ boundary.
 2. Stub emitter
 3. Listener, structured log, alert action
 4. Isolate action
-5. Correlation window, one incident yields one decision
+5. Correlation window, one incident yields one decision (built so an incident can
+   move up a tier; that needs Joshua's agreement)
 6. Incident record with open, contained, resolved states
 7. Safe mode and confirmation path
 8. Return to normal with a precondition check

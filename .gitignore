@@ -1,5 +1,26 @@
 .venv/
 __pycache__/
 *.pyc
-logs/*.jsonl
 .env
+
+# Everything the code writes at runtime: the live log, scenario runs, replay results.
+# logs/*.jsonl alone missed logs/replay/, so ignore the whole folder and keep only the placeholder.
+logs/*
+!logs/.gitkeep
+
+# Archives and git bundles are never source
+*.rar
+*.zip
+*.7z
+*.bundle
+
+# Editor, OS and tool clutter
+.pytest_cache/
+.coverage
+htmlcov/
+.vscode/
+.idea/
+.claude/settings.local.json
+Thumbs.db
+desktop.ini
+.DS_Store
