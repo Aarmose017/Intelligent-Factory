@@ -18,6 +18,16 @@ In a second terminal:
 
     python stub/send_alert.py
 
+Whole loop in the simulation (inject, detect, decide, act, recover), same seed gives the same result:
+
+    python -m sim.scenario skip_step      # or drift, or none
+
+It writes logs/scenario.jsonl and the ground-truth logs/labels.jsonl, never the live receiver's log.
+
+Watchdog for a running receiver (fail-open: alerts the operator, never stops the line):
+
+    python -m receiver.watchdog
+
 ## Test
 
     pytest -q
@@ -26,10 +36,11 @@ In a second terminal:
 
     schema/     alert schema and sample, shared with Team B
     policy/     policy table as config, read at startup
-    engine/     matching, tiers, logging
-    receiver/   FastAPI endpoint
+    engine/     matching, tiers, logging, incidents, the responder
+    receiver/   FastAPI endpoint, watchdog
     stub/       fake alert sender
-    actions/    response actions (Sprint 3)
+    actions/    isolate, safe state, return to normal
+    sim/        shared line, attacks with labels, stand-in detector, scenario runner
     tests/
     docs/       definitions, threat analysis, environment notes
     logs/       JSON Lines output, not committed

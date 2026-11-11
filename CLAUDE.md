@@ -23,7 +23,7 @@ Course instructor: Prof. Masoud Sadjadi.
 
 ## Stack, already decided
 
-Python 3.11+ throughout, because FactorySimPy is a SimPy library and our attack
+Python 3.14 throughout (CI and local runs), because FactorySimPy is a SimPy library and our attack
 injection has to run inside it. A second language would only add an integration
 boundary.
 

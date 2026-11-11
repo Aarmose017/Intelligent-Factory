@@ -1,6 +1,8 @@
 import time
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 
 from engine.log import now, write
 from engine.policy import load_policy, pick_tier
@@ -17,6 +19,13 @@ async def stamp_arrival(request: Request, call_next):
     request.state.received_at = now()
     request.state.received_clock = time.perf_counter()
     return await call_next(request)
+
+
+@app.exception_handler(RequestValidationError)
+async def log_rejected(request: Request, exc):
+    # A body we refuse still gets a log line, otherwise bad input leaves no trace.
+    write({}, None, request.state.received_at, event="rejected", reason="request body failed validation")
+    return await request_validation_exception_handler(request, exc)
 
 
 @app.post("/alert")
