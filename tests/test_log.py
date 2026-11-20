@@ -10,6 +10,7 @@ from engine import log
 RULE = {"technique": "sensor_drift_high", "tier": 2}
 
 ALERT = {
+    "schema_version": "1.0",
     "alert_id": "a1",
     "emitted_at": "2026-10-01T14:22:31Z",
     "observed_at": "2026-10-01T14:22:29Z",
@@ -24,6 +25,17 @@ def log_file(tmp_path, monkeypatch):
     path = tmp_path / "logs" / "response.jsonl"
     monkeypatch.setattr(log, "LOG", path)
     return path
+
+
+@pytest.fixture
+def client(log_file, monkeypatch):
+    # A fresh Responder per test, so incidents from one test cannot correlate with the next one's alerts.
+    from engine.policy import load_settings
+    from engine.respond import Responder
+    from receiver import main
+
+    monkeypatch.setattr(main, "RESPONDER", Responder(main.RULES, load_settings()))
+    return TestClient(main.app)
 
 
 def strict_loads(line):
@@ -135,10 +147,8 @@ def test_default_log_path_does_not_depend_on_working_directory():
     assert log.LOG == repo / "logs" / "response.jsonl"
 
 
-def test_receiver_records_received_at_and_decision_time(log_file):
-    from receiver.main import app
-
-    r = TestClient(app).post("/alert", json=ALERT)
+def test_receiver_records_received_at_and_decision_time(client, log_file):
+    r = client.post("/alert", json=ALERT)
     assert r.status_code == 200
     entry = read_lines(log_file)[0]
     assert entry["received_at"] is not None
@@ -147,13 +157,11 @@ def test_receiver_records_received_at_and_decision_time(log_file):
     assert entry["decision_ms"] >= 0
 
 
-def test_receiver_logs_unmatched_alert(log_file):
-    # Records today's behaviour only. What no-match should do is still a team
+def test_receiver_logs_unmatched_alert(client, log_file):
+    # An unknown class is not a schema error. What no-match should do is still a team
     # decision, this just makes sure the line is written either way.
-    from receiver.main import app
-
-    r = TestClient(app).post("/alert", json={**ALERT, "incident_class": "not_a_class"})
-    assert r.json() == {"decision": "no_rule_matched"}
+    r = client.post("/alert", json={**ALERT, "incident_class": "not_a_class"})
+    assert r.json() == {"decision": "no_rule_matched", "incident_id": 1}
     entry = read_lines(log_file)[0]
     assert entry["rule"] is None and entry["tier"] is None
 
@@ -163,39 +171,92 @@ def test_nan_inside_a_list_still_gives_valid_json(log_file):
     assert read_lines(log_file)[0]["affected_subsystem"] == [1.0, "nan", ["-inf"]]
 
 
-def test_health_reports_the_rules_it_loaded():
-    from receiver.main import app
-
-    assert TestClient(app).get("/health").json() == {"status": "ok", "rules_loaded": 3}
+def test_health_reports_the_rules_it_loaded(client):
+    assert client.get("/health").json() == {"status": "ok", "rules_loaded": 3}
 
 
-def test_stub_sends_the_sample_alert_and_it_is_logged(log_file, monkeypatch, capsys):
+def test_stub_sends_the_sample_alert_and_it_is_logged(client, log_file, monkeypatch, capsys):
     import httpx
-    from receiver.main import app
     from stub import send_alert
 
-    client = TestClient(app)
     monkeypatch.setattr(httpx, "post", lambda url, json: client.post("/alert", json=json))
     send_alert.main(str(pathlib.Path(__file__).resolve().parent.parent / "schema" / "sample_alert.json"))
     assert "200" in capsys.readouterr().out
     entry = read_lines(log_file)[0]
     assert entry["alert_id"] == "a1" and entry["tier"] == 2
+    assert entry["observed_at"] == "2026-10-01T14:22:29Z"  # the string Team B sent, not a reformatted one
 
 
-def test_receiver_does_not_crash_on_a_confidence_that_is_not_a_number(log_file):
-    # B6: this was a 500 with nothing in the log.
-    from receiver.main import app
+def test_receiver_rejects_a_confidence_that_is_not_a_number(client, log_file):
+    # B6: this was a 500 with nothing in the log. Now it breaks the schema and says which field.
+    r = client.post("/alert", json={**ALERT, "confidence": "high"})
+    assert r.status_code == 422
+    entry = read_lines(log_file)[0]
+    assert entry["event"] == "rejected" and entry["fields"] == ["confidence"]
+    assert entry["alert_id"] == "a1" and entry["confidence"] == "high"
 
-    r = TestClient(app, raise_server_exceptions=False).post("/alert", json={**ALERT, "confidence": "high"})
-    assert r.status_code == 200 and r.json() == {"decision": "no_rule_matched"}
-    assert read_lines(log_file)[0]["confidence"] == "high"
 
-
-def test_receiver_logs_a_body_it_rejects(log_file):
+def test_receiver_logs_a_body_it_rejects(client, log_file):
     # B6: a body that is not a JSON object got a 422 and left no trace.
-    from receiver.main import app
-
-    r = TestClient(app).post("/alert", content=b"[1, 2]", headers={"content-type": "application/json"})
+    r = client.post("/alert", content=b"[1, 2]", headers={"content-type": "application/json"})
     assert r.status_code == 422
     entry = read_lines(log_file)[0]
     assert entry["event"] == "rejected" and entry["received_at"] is not None
+
+
+@pytest.mark.parametrize("change, field", [
+    ({"schema_version": "2.0"}, "schema_version"),
+    ({"alert_id": ""}, "alert_id"),
+    ({"alert_id": 7}, "alert_id"),
+    ({"emitted_at": "yesterday"}, "emitted_at"),
+    ({"observed_at": "2026-10-01T14:22:29"}, "observed_at"),  # no timezone
+    ({"incident_class": None}, "incident_class"),
+    ({"confidence": True}, "confidence"),
+    ({"confidence": "0.9"}, "confidence"),
+    ({"confidence": 1.5}, "confidence"),
+    ({"confidence": -0.1}, "confidence"),
+    ({"affected_subsystem": ""}, "affected_subsystem"),
+])
+def test_receiver_enforces_the_alert_schema(client, log_file, change, field):
+    r = client.post("/alert", json={**ALERT, **change})
+    assert r.status_code == 422
+    entry = read_lines(log_file)[0]
+    assert entry["event"] == "rejected" and entry["fields"] == [field]
+
+
+@pytest.mark.parametrize("field", ["schema_version", "alert_id", "emitted_at", "observed_at",
+                                   "incident_class", "confidence", "affected_subsystem"])
+def test_receiver_rejects_an_alert_missing_a_field(client, log_file, field):
+    r = client.post("/alert", json={k: v for k, v in ALERT.items() if k != field})
+    assert r.status_code == 422
+    assert read_lines(log_file)[0]["fields"] == [field]
+
+
+def test_receiver_lets_extra_fields_through(client, log_file):
+    deviation = {"signal": "cycle_time_s", "expected_band": [10.0, 12.0], "actual": 17.4}
+    r = client.post("/alert", json={**ALERT, "confidence": 1, "observed_deviation": deviation})
+    assert r.status_code == 200 and r.json()["tier"] == 2
+
+
+def test_live_alerts_are_correlated_and_repeats_suppressed(client, log_file):
+    first = client.post("/alert", json=ALERT).json()
+    second = client.post("/alert", json={**ALERT, "alert_id": "a2"}).json()
+    assert first == second == {"decision": "matched", "tier": 2, "rule": "T0836", "incident_id": 1}
+    assert [e["event"] for e in read_lines(log_file)] == ["decision", "suppressed"]
+
+
+def test_live_alerts_escalate_one_incident(client, log_file):
+    low = client.post("/alert", json={**ALERT, "confidence": 0.5}).json()
+    high = client.post("/alert", json={**ALERT, "alert_id": "a2"}).json()
+    assert low["tier"] == 1 and high["tier"] == 2 and low["incident_id"] == high["incident_id"]
+    entries = read_lines(log_file)
+    assert [(e["event"], e["action"]) for e in entries] == [("decision", "alert_operator"), ("decision", "isolate")]
+    assert entries[1]["escalated"] is True
+
+
+def test_live_disruptive_actions_are_rate_limited(client, log_file):
+    # policy: at most 2 tier 2 or 3 actions per 60 seconds, extra ones drop to tier 1.
+    tiers = [client.post("/alert", json={**ALERT, "alert_id": f"a{i}", "affected_subsystem": f"M{i}"}).json()["tier"]
+             for i in range(3)]
+    assert tiers == [2, 2, 1]
+    assert read_lines(log_file)[2]["reason"] == "rate_limited"

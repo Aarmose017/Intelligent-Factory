@@ -18,6 +18,15 @@ In a second terminal:
 
     python stub/send_alert.py
 
+The receiver checks every alert against the schema in `engine/schema.py` (the fields of
+`schema/sample_alert.json`). A bad alert gets a 422 and a `rejected` log line naming the fields. Good alerts go
+through the same responder as the simulation: correlation, suppression and the rate limit. No line is attached
+to the live receiver yet, so tier 2 and 3 are decided and logged but not carried out.
+
+Offline replay of a folder of alert files, one alert per `.json` file, in `emitted_at` order:
+
+    python -m receiver.folder path\to\alerts   # writes logs/folder.jsonl
+
 Whole loop in the simulation (inject, detect, decide, act, recover), same seed gives the same result:
 
     python -m sim.scenario skip_step      # or drift, or none
@@ -40,8 +49,8 @@ Watchdog for a running receiver (fail-open: alerts the operator, never stops the
 
     schema/     alert schema and sample, shared with Team B
     policy/     policy table as config, read at startup
-    engine/     matching, tiers, logging, incidents, the responder
-    receiver/   FastAPI endpoint, watchdog
+    engine/     alert schema check, matching, tiers, logging, incidents, the responder
+    receiver/   FastAPI endpoint, folder replay, watchdog
     stub/       fake alert sender
     actions/    isolate, safe state, return to normal
     sim/        shared line, attacks with labels, stand-in detector, scenario runner

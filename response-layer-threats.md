@@ -49,7 +49,7 @@ The service also runs as a single process with no supervisor, and the guide show
 **Weakness.** This turns our own defence into the attack. If an attacker can send alerts to the receiver, or fool the detector into producing them, they can trigger a high tier on demand and stop the line repeatedly. Today:
 
 - The endpoint has no authentication, so anyone who can reach it can pose as the detector.
-- There is no rate limit and no check for repeated or replayed alerts.
+- Tier 2 and 3 are rate limited (2 per 60 s, set in `policy/policy.yaml`), and since Sprint 5 that applies to live alerts too. There is still no check for repeated or replayed alerts.
 - A single alert with a high enough confidence can reach a high tier on its own.
 
 Schema validation (Part 3, item 1) helps with malformed input but not with well-formed fake alerts.

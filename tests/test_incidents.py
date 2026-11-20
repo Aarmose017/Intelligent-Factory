@@ -39,6 +39,17 @@ def test_disruptive_incident_stays_open_through_a_quiet_spell():
     assert first["state"] == "open"
 
 
+def test_without_a_line_a_disruptive_incident_ends_when_its_alerts_stop():
+    # The live receiver has no line to contain or resolve anything, so otherwise one tier 2 decision would
+    # suppress every later attack on the same machine until a restart.
+    incidents = Incidents(window=10, line=False)
+    first, _ = incidents.correlate(DRIFT, 0)
+    first["tier"] = 2
+    assert incidents.correlate(DRIFT, 5) == (first, False)
+    second, new = incidents.correlate(DRIFT, 100)
+    assert new and second is not first and first["state"] == "resolved"
+
+
 def test_stale_alert_right_after_recovery_is_absorbed_a_later_one_is_new():
     incidents = Incidents(window=10)
     first, _ = incidents.correlate(DRIFT, 0)

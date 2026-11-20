@@ -12,14 +12,21 @@ changes, change the definition here in the same pull request. Items marked
 **Alert.** One JSON message from Team B's detector saying a process signal left
 its expected band. It has an `alert_id`, an `incident_class`, a `confidence`
 between 0 and 1 and an `affected_subsystem`, in the format of
-`schema/sample_alert.json`.
+`schema/sample_alert.json`. The receiver and the folder replay check it in
+`engine/schema.py`: `schema_version` "1.0", non-empty text for the id, class and
+subsystem, `emitted_at` and `observed_at` in ISO 8601 with a timezone, and a
+`confidence` that is a real number from 0 to 1. Anything else is rejected and
+logged with the failing fields. Extra fields such as `observed_deviation` are
+allowed. An unknown `incident_class` is not rejected, it is logged as no rule matched.
 
 **Incident.** What our layer treats as one problem on the line. It can be built
 from many alerts and gets one record. An alert joins it if it has the same class
 and subsystem and the incident is unresolved, or was resolved less than one
 correlation window ago. A later alert only causes another action if it asks for a
 higher tier. **Proposal:** CLAUDE.md says one decision per incident, and moving up
-a tier needs Joshua's agreement.
+a tier needs Joshua's agreement. On the live receiver no line is attached, so
+nothing contains or resolves an incident. There every incident ends when its
+alerts stop for one correlation window, the way tier 0 and 1 incidents do on the line.
 
 **Action tier.** How disruptive our response is, picked by the policy rule that
 matches the incident. 0 log only, 1 alert the operator, 2 isolate the subsystem,

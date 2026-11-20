@@ -15,8 +15,10 @@ def move(incident, state, now):
 
 
 class Incidents:
-    def __init__(self, window):
-        self.window = window
+    def __init__(self, window, line=True):
+        """line=False: nothing acts on a line (the live receiver today), so no tier contains or resolves an
+        incident, and every incident ends when its alerts stop, like tier 0 and 1 do on the line."""
+        self.window, self.line = window, line
         self.all = []
 
     def correlate(self, alert, now):
@@ -25,7 +27,8 @@ class Incidents:
         stale readings that keep firing for a moment after recovery."""
         key = (alert.get("incident_class"), alert.get("affected_subsystem"))
         inc = next((i for i in reversed(self.all) if i["key"] == key), None)
-        if inc and inc["state"] == "open" and (inc["tier"] or 0) < 2 and now - inc["last_alert"] > self.window:
+        if (inc and inc["state"] == "open" and (not self.line or (inc["tier"] or 0) < 2)
+                and now - inc["last_alert"] > self.window):
             # Tier 0 and 1 change nothing on the line, so they end when their alerts stop.
             move(inc, "resolved", inc["last_alert"])
         if inc and (inc["state"] != "resolved" or now - inc["resolved_at"] <= self.window):
