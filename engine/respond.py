@@ -1,5 +1,7 @@
-"""Alert in, at most one action per tier per incident out. Shared by the simulation now and by the live receiver
-once Team B sends alerts. With no line to act on, actions are logged as decided but not carried out."""
+"""Alert in, at most one action per tier per incident out. Shared by the simulation, the live receiver and the
+folder replay. With no line to act on, actions are logged as decided but not carried out."""
+import time
+
 from engine import log
 from engine.incidents import Incidents, move
 from engine.policy import pick_tier
@@ -10,12 +12,19 @@ ACTIONS = {None: "no_rule", 0: "log_only", 1: "alert_operator", 2: "isolate", 3:
 class Responder:
     def __init__(self, rules, settings, env=None, control=None):
         self.rules, self.s, self.env, self.control = rules, settings, env, control
-        self.incidents = Incidents(settings["correlation_window"])
+        self.incidents = Incidents(settings["correlation_window"], line=control is not None)
         self.disruptive = []  # times of tier 2 and 3 actions, for the rate limit
 
-    def handle(self, alert, now):
+    def handle(self, alert, now, received_at=None, clock=None):
+        """`now` is in seconds on whatever clock drives correlation (simulation time, or a monotonic clock live).
+        The live receiver also passes its ISO arrival time and the perf_counter value at arrival, so each log
+        line keeps received_at and decision_ms. The simulation leaves them out and logs its own time."""
+        def write(rule, **extra):
+            ms = None if clock is None else (time.perf_counter() - clock) * 1000
+            log.write(alert, rule, now if received_at is None else received_at, ms, t=now, **extra)
+
         if not isinstance(alert, dict):
-            log.write(alert, None, now, event="rejected", reason="alert is not an object", t=now)
+            write(None, event="rejected", reason="alert is not an object")
             return None
         inc, new = self.incidents.correlate(alert, now)
         rule = pick_tier(alert, self.rules)
@@ -30,14 +39,14 @@ class Responder:
         # and never once it is resolved. Alerts landing just after recovery are stale readings.
         if not new and (inc["state"] == "resolved" or tier is None
                         or tier <= (-1 if inc["tier"] is None else inc["tier"])):
-            log.write(alert, rule, now, event="suppressed", reason=why, incident_id=inc["id"], tier=tier, t=now)
+            write(rule, event="suppressed", reason=why, incident_id=inc["id"], tier=tier)
             return inc
         if tier is not None and tier >= 2:
             self.disruptive.append(now)
         inc["tier"], inc["technique"] = tier, rule["technique"] if rule else None
         inc["actions"].append(ACTIONS[tier])
-        log.write(alert, rule, now, event="decision", action=ACTIONS[tier], reason=why, escalated=not new,
-                  incident_id=inc["id"], tier=tier, t=now)
+        write(rule, event="decision", action=ACTIONS[tier], reason=why, escalated=not new,
+              incident_id=inc["id"], tier=tier)
         if self.control and tier in (2, 3):
             self.env.process(self._isolate(inc) if tier == 2 else self._safe_state(inc))
         return inc
