@@ -35,6 +35,8 @@ def client(log_file, monkeypatch):
     from receiver import main
 
     monkeypatch.setattr(main, "RESPONDER", Responder(main.RULES, load_settings()))
+    monkeypatch.setattr(main, "SEEN", {})  # alert_ids from earlier tests would count as repeats
+    monkeypatch.setattr(main, "KEY", None)
     return TestClient(main.app)
 
 
@@ -171,15 +173,139 @@ def test_nan_inside_a_list_still_gives_valid_json(log_file):
     assert read_lines(log_file)[0]["affected_subsystem"] == [1.0, "nan", ["-inf"]]
 
 
-def test_health_reports_the_rules_it_loaded(client):
-    assert client.get("/health").json() == {"status": "ok", "rules_loaded": 3}
+def test_health_reports_the_rules_and_policy_it_loaded(client):
+    import hashlib
+    from engine.policy import DEFAULT_PATH
+
+    expected = hashlib.sha256(pathlib.Path(DEFAULT_PATH).read_bytes()).hexdigest()
+    assert client.get("/health").json() == {"status": "ok", "rules_loaded": 3, "policy_sha256": expected,
+                                            "sender_key_required": False}
+
+
+def test_startup_logs_which_policy_is_in_force(client, log_file):
+    from receiver.main import POLICY_SHA256, app
+
+    with TestClient(app):  # entering runs the startup step, like uvicorn does
+        pass
+    entry = read_lines(log_file)[0]
+    assert entry["event"] == "startup" and entry["policy_sha256"] == POLICY_SHA256
+    assert entry["rules_loaded"] == 3 and entry["sender_key_required"] is False
+
+
+def test_a_repeated_alert_id_is_rejected(client, log_file):
+    assert client.post("/alert", json=ALERT).status_code == 200
+    r = client.post("/alert", json=ALERT)
+    assert r.status_code == 409
+    entries = read_lines(log_file)
+    assert [e["event"] for e in entries] == ["decision", "rejected"]
+    assert entries[1]["reason"] == "duplicate alert_id" and entries[1]["alert_id"] == "a1"
+
+
+def test_only_the_newest_alert_ids_are_remembered(client, monkeypatch):
+    from receiver import main
+
+    monkeypatch.setattr(main, "MAX_SEEN", 2)
+    for i in range(3):
+        client.post("/alert", json={**ALERT, "alert_id": f"a{i}", "affected_subsystem": f"M{i}"})
+    assert list(main.SEEN) == ["a1", "a2"]
+
+
+def test_a_rejected_alert_is_not_remembered(client):
+    assert client.post("/alert", json={**ALERT, "confidence": "high"}).status_code == 422
+    assert client.post("/alert", json=ALERT).status_code == 200  # the fixed version can still be sent
+
+
+def test_stale_alerts_are_rejected_when_switched_on(client, log_file, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from receiver import main
+
+    monkeypatch.setattr(main, "SETTINGS", {**main.SETTINGS, "max_alert_age_s": 60})
+    fresh = datetime.now(timezone.utc).isoformat()
+    old = (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat()
+    assert client.post("/alert", json={**ALERT, "alert_id": "new", "emitted_at": fresh}).status_code == 200
+    r = client.post("/alert", json={**ALERT, "alert_id": "old", "emitted_at": old})
+    assert r.status_code == 422
+    entry = read_lines(log_file)[1]
+    assert entry["reason"] == "alert is stale" and entry["age_s"] >= 120
+
+
+def test_stale_check_is_off_by_default(client):
+    # The sample alert is dated 2026-10-01, which only passes while the check is off.
+    from engine.policy import load_settings
+
+    assert load_settings()["max_alert_age_s"] is None
+    assert client.post("/alert", json=ALERT).status_code == 200
+
+
+@pytest.mark.parametrize("headers", [{}, {"X-Alert-Key": "wrong"}])
+def test_sender_key_is_required_when_set(client, log_file, monkeypatch, headers):
+    from receiver import main
+
+    monkeypatch.setattr(main, "KEY", "s3cret")
+    r = client.post("/alert", json=ALERT, headers=headers)
+    assert r.status_code == 401
+    entry = read_lines(log_file)[0]
+    assert entry["event"] == "rejected" and entry["reason"] == "missing or wrong sender key"
+    assert entry["alert_id"] is None  # the body of an unknown sender is not even read
+
+
+def test_right_sender_key_is_accepted_and_health_needs_none(client, monkeypatch):
+    from receiver import main
+
+    monkeypatch.setattr(main, "KEY", "s3cret")
+    assert client.post("/alert", json=ALERT, headers={"X-Alert-Key": "s3cret"}).status_code == 200
+    assert client.get("/health").json()["sender_key_required"] is True  # the watchdog has no key
+
+
+def test_stub_sends_the_key_when_one_is_set(client, monkeypatch, capsys):
+    import httpx
+    from receiver import main
+    from stub import send_alert
+
+    monkeypatch.setattr(main, "KEY", "s3cret")
+    monkeypatch.setenv("ALERT_KEY", "s3cret")
+    monkeypatch.setattr(httpx, "post", lambda url, json, headers=None: client.post("/alert", json=json,
+                                                                                   headers=headers))
+    send_alert.main(str(pathlib.Path(__file__).resolve().parent.parent / "schema" / "sample_alert.json"))
+    assert capsys.readouterr().out.startswith("200")
+
+
+def test_live_alerts_are_handled_one_at_a_time(client, monkeypatch):
+    # FastAPI runs each request on its own worker thread. Without the lock two alerts could correlate against the
+    # incident list at the same time. This counts how many are inside the responder at once.
+    import time
+    from receiver import main
+
+    inside, most = [0], [0]
+    real = main.RESPONDER.handle
+
+    def slow(*args):
+        inside[0] += 1
+        most[0] = max(most[0], inside[0])
+        time.sleep(0.02)
+        try:
+            return real(*args)
+        finally:
+            inside[0] -= 1
+
+    monkeypatch.setattr(main.RESPONDER, "handle", slow)
+    replies = []
+    workers = [threading.Thread(target=lambda i=i: replies.append(client.post(
+        "/alert", json={**ALERT, "alert_id": f"a{i}", "affected_subsystem": f"M{i}"}).json()))
+        for i in range(10)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+    assert most[0] == 1
+    assert sorted(r["incident_id"] for r in replies) == list(range(1, 11))
 
 
 def test_stub_sends_the_sample_alert_and_it_is_logged(client, log_file, monkeypatch, capsys):
     import httpx
     from stub import send_alert
 
-    monkeypatch.setattr(httpx, "post", lambda url, json: client.post("/alert", json=json))
+    monkeypatch.setattr(httpx, "post", lambda url, json, headers=None: client.post("/alert", json=json))
     send_alert.main(str(pathlib.Path(__file__).resolve().parent.parent / "schema" / "sample_alert.json"))
     assert "200" in capsys.readouterr().out
     entry = read_lines(log_file)[0]

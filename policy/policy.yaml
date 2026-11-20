@@ -29,3 +29,7 @@ settings:
   rate_limit:              # disruptive actions (tier 2 and 3) allowed per window, extra ones drop to tier 1
     max_actions: 2
     per_seconds: 60
+  # Live receiver only, in real seconds: reject an alert whose emitted_at is older than this, so an old captured
+  # alert cannot be replayed. null turns it off. Off for now: the sample alert is dated 2026-10-01 and we have not
+  # checked that Team B's clock agrees with ours. Turn on (for example 60) once their live alerts arrive.
+  max_alert_age_s: null

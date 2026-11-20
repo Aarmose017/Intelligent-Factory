@@ -19,7 +19,7 @@ Edit access exists at two levels: write access to the GitHub repo (any collabora
 - Require review on any change under `policy/` (CODEOWNERS plus the existing pull request rule), so no single person can change a tier alone.
 - Make the file read-only for the account the service runs under.
 - Validate on load: only known tiers allowed, and every critical incident class must still have a rule.
-- Log a hash of the policy at startup and include the policy version in every decision, so a change shows up in the record.
+- Log a hash of the policy at startup and include the policy version in every decision, so a change shows up in the record. Built in Sprint 5 for the first half: the receiver logs the sha256 of `policy/policy.yaml` in a `startup` line and shows it on `/health`. Decisions are matched to it by time, not tagged one by one.
 
 *Lands in Sprint 3 except the review rule, which we can enable now.*
 
@@ -48,8 +48,9 @@ The service also runs as a single process with no supervisor, and the guide show
 
 **Weakness.** This turns our own defence into the attack. If an attacker can send alerts to the receiver, or fool the detector into producing them, they can trigger a high tier on demand and stop the line repeatedly. Today:
 
-- The endpoint has no authentication, so anyone who can reach it can pose as the detector.
-- Tier 2 and 3 are rate limited (2 per 60 s, set in `policy/policy.yaml`), and since Sprint 5 that applies to live alerts too. There is still no check for repeated or replayed alerts.
+- Since Sprint 5 the endpoint can require a shared secret in an `X-Alert-Key` header, set through the `ALERT_KEY` environment variable and compared in constant time. Without the variable any sender is accepted, so it has to be set before the receiver runs on a shared network. A wrong or missing key gets a 401 and a log line, before the body is read.
+- Tier 2 and 3 are rate limited (2 per 60 s, set in `policy/policy.yaml`), and since Sprint 5 that applies to live alerts too.
+- Since Sprint 5 a repeated `alert_id` is rejected with a 409 (the last 10 000 ids are remembered, in memory, so a restart forgets them). Stale alerts can be rejected with `max_alert_age_s` in the policy file, but that is off until we know Team B's clock agrees with ours.
 - A single alert with a high enough confidence can reach a high tier on its own.
 
 Schema validation (Part 3, item 1) helps with malformed input but not with well-formed fake alerts.
