@@ -45,6 +45,15 @@ def test_folder_replay_goes_by_emitted_at_and_correlates_on_those_times(folder):
     assert [i["id"] for i in responder.incidents.all] == [1, 2]
 
 
+def test_folder_replay_rejects_a_repeated_alert_id(folder):
+    (folder / "6-copy.json").write_text(json.dumps({**ALERT, "alert_id": "first", "confidence": 0.5}),
+                                        encoding="utf-8")
+    _, accepted, rejected = replay(folder)
+    assert (accepted, rejected) == (3, 3)
+    copy = next(e for e in lines() if e.get("file") == "6-copy.json")
+    assert copy["event"] == "rejected" and copy["reason"] == "duplicate alert_id"
+
+
 def test_folder_replay_logs_bad_files_and_keeps_going(folder):
     replay(folder)
     rejected = {e["file"]: e for e in lines() if e["event"] == "rejected"}

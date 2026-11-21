@@ -4,7 +4,8 @@
 
 Lets Team B hand us alerts without a network: one alert per .json file. Alerts are taken in emitted_at order
 and correlation runs on those times, so the same folder always gives the same decisions. A file that is not
-valid JSON or breaks the schema is logged as rejected, with the file name, and the rest still run.
+valid JSON, breaks the schema or repeats an alert_id is logged as rejected, with the file name, and the rest still
+run. There is no stale check here: replaying old alerts is the point of this route.
 """
 import json
 import pathlib
@@ -32,6 +33,10 @@ def replay(folder):
             log.write(body if isinstance(body, dict) else {}, None, log.now(), event="rejected",
                       reason="alert failed validation" if fields else f"could not read: {e}", fields=fields,
                       file=path.name)
+            rejected += 1
+            continue
+        if alert["alert_id"] in (a[2]["alert_id"] for a in alerts):
+            log.write(alert, None, log.now(), event="rejected", reason="duplicate alert_id", file=path.name)
             rejected += 1
             continue
         alerts.append((datetime.fromisoformat(alert["emitted_at"]).timestamp(), path.name, alert))

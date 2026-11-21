@@ -23,6 +23,15 @@ The receiver checks every alert against the schema in `engine/schema.py` (the fi
 through the same responder as the simulation: correlation, suppression and the rate limit. No line is attached
 to the live receiver yet, so tier 2 and 3 are decided and logged but not carried out.
 
+Also rejected and logged: a repeated `alert_id` (409), and an alert older than `max_alert_age_s` in the policy
+file (off by default). At startup the receiver logs the sha256 of the policy file, and `/health` shows it.
+
+To require a sender key, set the same secret for the receiver and the sender before starting them. The stub sends
+it in the `X-Alert-Key` header. Never write the key into a file in the repo.
+
+    $env:ALERT_KEY = "pick-a-secret"     # PowerShell, in both terminals
+    export ALERT_KEY=pick-a-secret        # Mac / Linux / Git Bash
+
 Offline replay of a folder of alert files, one alert per `.json` file, in `emitted_at` order:
 
     python -m receiver.folder path\to\alerts   # writes logs/folder.jsonl
